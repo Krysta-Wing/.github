@@ -47,7 +47,7 @@ claw-daemon          kwing-library + gate.py
 This is what a developer using Krysta Wing writes:
 
 ```python
-from kwing import Claw
+from krysta import Claw
 
 async with Claw.spawn(runtime="python", timeout=10) as sandbox:
 
@@ -123,17 +123,17 @@ npm run dev                   # start Next.js gateway at localhost:3000
 ---
 
 ### `krysta-wing` (kwing-library) — Execution Tracer + Telemetry
-**Domain:** `kwing-library` (PyPI: `pip install krysta-wing`)
+**Domain:** `kwing-library` (PyPI: `pip install krysta`)
 **Language:** Python
 **Status:** Live
 
 The observability layer. Originally built as an ML telemetry tracker. Now repurposed as the execution trace engine — every job that runs through claw gets logged here as a structured event stream.
 
 ```
-kwing_eval/
+krysta_eval/
 ├── __init__.py
 ├── schema.py              # frozen JSON report schema — do not modify without a team discussion
-├── cli.py                 # terminal interface: kwing-eval run / kwing-eval diff
+├── cli.py                 # terminal interface: krysta-eval run / krysta-eval diff
 ├── core/
 │   ├── engine.py          # main evaluation lifecycle orchestrator
 │   ├── baseline.py        # sliding-window μ ± 2σ statistical manager
@@ -151,7 +151,7 @@ kwing_eval/
 
 **Quick start:**
 ```python
-from kwing_reporter import ModelReport
+from krysta_reporter import ModelReport
 
 reporter = ModelReport(week=22, model_name="ResNet50-XAI", modality="hybrid-omni")
 reporter.metrics = {
@@ -162,7 +162,7 @@ reporter.metrics = {
 reporter.compile()  # outputs structured JSON + markdown report
 ```
 
-**Config (kwing_config.yaml):**
+**Config (krysta_config.yaml):**
 ```yaml
 workspace_root: "production_reports"
 thresholds:
@@ -178,7 +178,7 @@ thresholds:
 ┌─────────────────────────────────────────────────────────┐
 │                    CONSUMER LAYER                       │
 │   AI Agent (generates code)    Developer / CI pipeline  │
-│                    kwing-sdk (pip install kwing)         │
+│                    kwing-sdk (pip install krysta)         │
 └──────────────────────┬──────────────────────────────────┘
                        │ POST /execute
 ┌──────────────────────▼──────────────────────────────────┐
@@ -283,7 +283,7 @@ We are the execution layer that makes agent-generated code safe to run in produc
 
 ## Contact and Links
 
-- PyPI: `pip install krysta-wing`
+- PyPI: `pip install krysta`
 - Domains: `kwing-claw` · `kwing-library`
 - GitHub org: Krysta Wing (private repos — request access from core team)
 
