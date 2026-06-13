@@ -1,292 +1,48 @@
 # Krysta Wing
+### The Execution and Observability Layer for AI Agent Systems.
+Traditional application infrastructure was built for predictable human input. AI agents change everything. They generate untrusted code, execute complex loops, and require stateful runtime environments.
 
-**Execution infrastructure for AI agents.**
-
-Run agent-generated code safely. Stream output live. Validate before it propagates.
-
----
-
-## What We Are
-
-Krysta Wing is an independent engineering org building the execution and observability layer for AI agent systems. We are not an MLOps platform. We are not a monitoring dashboard. We are the infrastructure that sits between an AI agent and the damage it could do — making sure code runs safely, output streams in real time, and nothing broken propagates to the next step.
+Krysta Wing is the missing infrastructure layer that sits between autonomous AI agents and the damage they could do. We provide ultra-low latency, sandboxed, and stateful workspaces that ensure agent code runs safely, streams in real time, and never propagates breaking changes downstream.
 
 ---
 
-## The Problem We Solve
-
-AI agents write and execute code. That code needs to run somewhere. Every existing option forces a tradeoff:
-
-- **E2B / Modal** — request/response black boxes. You submit code, you wait, you get a dump. If the agent writes an infinite loop or a long script, your UI freezes. No visibility until it's over.
-- **Raw Docker containers** — no isolation guarantees, no output validation, no trace of what happened.
-- **Nothing** — most teams just let the agent execute code directly. One bad generation away from a disaster.
-
-We solve the visibility and safety gap. Developers get live-streamed stdout as it happens, a full execution trace logged automatically, and a validation gate that checks the output before it moves downstream.
+###  The Problem We Solve
+When AI agents write and execute code, engineering teams face a broken choice:
+- The Request/Response Box: Submit code to a heavy, black-box micro-VM, wait, and get a raw log dump. If the agent writes an infinite loop, your user interface completely freezes.
+- The Stateless Reset: Use a basic container that wipes its memory after every single line of code. If your agent creates a file in Step 1, it vanishes before Step 2.
+- The Disaster: Execute code directly on bare host servers—leaving the company one bad LLM generation away from a catastrophic database wipe or a data exfiltration leak.
+Krysta Wing fixes this by introducing the three core primitives of autonomous runtime safety.
 
 ---
-
-## The Three Primitives
-
-Every product we build maps to one of three things:
-
+### Core Primitives: Execute → Observe → Validate
+Every component we build maps to three critical production requirements:
 ```
-Execute    →    Observe    →    Validate
-  ↑                               ↓
-claw-daemon          kwing-library + gate.py
+    [ EXECUTE ]             ──►             [ OBSERVE ]             ──►            [ VALIDATE ]
+Run untrusted code in                   Log every stdout chunk,                  Enforce structural 
+isolated Docker environments.           memory metric, and event                 rules and metrics before
+Streams live via SSE.                   to a structured jobId trace.             passing data downstream.
 ```
 
-**Execute** — run untrusted agent-generated code in a sandboxed environment, stream stdout live via SSE.
+- Execute (claw-daemon): A lightweight backend service that spawns highly restricted, sandboxed container environments (--network none, hard memory limits) to isolate code execution entirely from host systems.
+- Observe (krysta-library): A developer-first Python SDK that streams granular stdout and execution traces live into your agent UI as they happen, eliminating UI freezes.
+- Validate (gate.py): Structural and security gates that evaluate execution results against safety policies and schemas before the output is allowed to touch your next agent turn.
 
-**Observe** — log every execution event (stdout lines, timing, memory, errors) as a structured trace tied to a jobId.
+###  Developer API Surface
 
-**Validate** — check the execution output against rules before passing it to the next agent step. Block if it fails.
-
----
-
-## The Developer API
-
-This is what a developer using Krysta Wing writes:
-
-```python
+```py
 from krysta import Claw
 
-async with Claw.spawn(runtime="python", timeout=10) as sandbox:
+# 1. Spawn a secure, stateful runtime session
+async with Claw.spawn(runtime="python", session_id="agent_turn_4") as sandbox:
 
-    # live streaming — see output as it happens
+    # 2. Live streaming — observe stdout chunks as they happen
     async for chunk in sandbox.execute(agent_generated_code):
         print(chunk.stdout)
 
-    # validate before passing downstream
+    # 3. Validate structures before passing downstream
     result = sandbox.validate(rules=["valid_json", "no_network_calls"])
-
-    # full execution trace
+    
+    # Extract the full execution trace tied to this jobId
     trace = sandbox.trace()
 ```
 
-Three methods. That is the entire surface area a developer needs to think about.
-
----
-
-## Repository Map
-
-We operate across two domains. Understand what each repo owns before touching it.
-
-### `kwing-claw` — Execution Infrastructure
-**Domain:** `kwing-claw` (private)
-**Language:** Node.js
-**Status:** Live
-
-The core execution engine. This is the hardest and most critical piece of the stack. Do not modify without understanding the full event flow.
-
-```
-kwing-claw/
-├── src/
-│   ├── pages/
-│   │   └── api/
-│   │       ├── submit.js     # POST /execute — accepts payload, pushes to Kafka, returns jobId + 202
-│   │       └── stream.js     # GET /stream — SSE pipe, subscribes to Redis logs:jobId channel
-│   └── infrastructure/
-│       └── claw-daemon.js    # Kafka consumer → child_process.spawn() → stdout piped to Redis pub/sub
-├── docker-compose.yml        # spins up kwing-kafka + kwing-redis locally
-└── package.json
-```
-
-**How it works end to end:**
-
-```
-POST /execute
-    → Kafka (code-submissions topic, numPartitions: 3)
-        → claw-daemon consumes job
-            → child_process.spawn(runtime, code)
-                → stdout/stderr piped to Redis logs:{jobId}
-                    → GET /stream SSE connection reads Redis channel
-                        → browser receives live chunks
-```
-
-**Running locally:**
-```bash
-docker compose up -d          # start Kafka + Redis
-npm run daemon                # start worker pool (open 3 terminals for horizontal scaling)
-npm run dev                   # start Next.js gateway at localhost:3000
-```
-
-**Horizontal scaling:** The Kafka topic runs 3 partitions. Spin up 3 separate daemon processes and Kafka will rebalance automatically, distributing jobs round-robin. If one daemon dies mid-execution, Kafka reroutes to surviving workers.
-
-**Payload schema (POST /execute):**
-```json
-{
-  "runtime": "python3",
-  "code": "print('hello')",
-  "timeout_ms": 5000
-}
-```
-
----
-
-### `krysta-wing` (kwing-library) — Execution Tracer + Telemetry
-**Domain:** `kwing-library` (PyPI: `pip install krysta`)
-**Language:** Python
-**Status:** Live
-
-The observability layer. Originally built as an ML telemetry tracker. Now repurposed as the execution trace engine — every job that runs through claw gets logged here as a structured event stream.
-
-```
-krysta_eval/
-├── __init__.py
-├── schema.py              # frozen JSON report schema — do not modify without a team discussion
-├── cli.py                 # terminal interface: krysta-eval run / krysta-eval diff
-├── core/
-│   ├── engine.py          # main evaluation lifecycle orchestrator
-│   ├── baseline.py        # sliding-window μ ± 2σ statistical manager
-│   └── gate.py            # threshold + regression pass/fail logic (exit code 1 on fail)
-├── sdk/
-│   └── client.py          # unified kwing-sdk abstraction wrapper
-├── plugins/
-│   ├── base.py            # abstract plugin interface — all plugins implement this
-│   ├── rag_plugin.py      # RAG pipeline hook (structural, metrics incomplete)
-│   └── rag_metrics.py     # 🛑 INCOMPLETE — math functions, tracked in GitHub Issue
-└── runners/
-    ├── base.py            # abstract runner interface
-    └── torch_runner.py    # 🛑 INCOMPLETE — tracked in GitHub Issue
-```
-
-**Quick start:**
-```python
-from krysta_reporter import ModelReport
-
-reporter = ModelReport(week=22, model_name="ResNet50-XAI", modality="hybrid-omni")
-reporter.metrics = {
-    "latency": 14.2,
-    "vram": 3120.0,
-    "loss": 0.042
-}
-reporter.compile()  # outputs structured JSON + markdown report
-```
-
-**Config (krysta_config.yaml):**
-```yaml
-workspace_root: "production_reports"
-thresholds:
-  token_confidence: 0.85
-  latency_limit_ms: 50.0
-```
-
----
-
-## Architecture: Full System Map
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    CONSUMER LAYER                       │
-│   AI Agent (generates code)    Developer / CI pipeline  │
-│                    kwing-sdk (pip install krysta)         │
-└──────────────────────┬──────────────────────────────────┘
-                       │ POST /execute
-┌──────────────────────▼──────────────────────────────────┐
-│                    GATEWAY LAYER                        │
-│         api-gateway — Next.js deployed on Vercel        │
-│   POST /execute → jobId + 202  |  GET /stream → SSE     │
-└──────────┬──────────────────────────────────────────────┘
-           │                              ▲ SSE live stdout
-┌──────────▼──────────┐    ┌─────────────┴──────────────┐
-│    Apache Kafka      │    │      Redis pub/sub          │
-│  immutable job queue │    │   logs:jobId channel        │
-│  backpressure buffer │    │   zero-lag streaming        │
-└──────────┬──────────┘    └─────────────▲──────────────┘
-           │                             │ publish stdout
-┌──────────▼─────────────────────────────┴──────────────┐
-│               EXECUTION LAYER (claw-daemon)             │
-│   consumes Kafka → child_process.spawn() → pipe Redis   │
-│   worker pool, 3 partitions, hot-failover rebalance     │
-└──────────────────────┬──────────────────────────────────┘
-                       │ every event logged
-┌──────────────────────▼──────────────────────────────────┐
-│              OBSERVE LAYER (kwing-library)               │
-│   execution tracer — logs stdout, timing, memory, errors │
-│   baseline manager — μ ± 2σ sliding window profiles     │
-└──────────────────────┬──────────────────────────────────┘
-                       │ report JSON
-┌──────────────────────▼──────────────────────────────────┐
-│              VALIDATE LAYER (kwing-eval)                 │
-│   gate.py — threshold + regression checks               │
-│   sandbox.validate() — rule engine (no_network, etc.)   │
-│   PASS → exit 0 → next agent step                       │
-│   FAIL → exit 1 → block + structured report             │
-└─────────────────────────────────────────────────────────┘
-```
-
----
-
-## What Is Being Built Next
-
-In priority order:
-
-**1. Python SDK (`kwing/claw.py`)**
-The public-facing wrapper. Exposes `Claw.spawn()`, `sandbox.execute()`, `sandbox.validate()`, `sandbox.trace()`. Hits the Vercel gateway internally. This is what external developers install.
-
-**2. Execution tracer bridge**
-Connect kwing-library's `ModelReport.compile()` output directly to the claw-daemon job lifecycle. Every `jobId` gets a trace file automatically.
-
-**3. `sandbox.validate()` rule engine**
-Build on top of existing `gate.py`. Accepts a list of named rules (`valid_json`, `no_network_calls`, `output_under_limit`) and returns pass/fail with a structured reason.
-
-**4. `torch_runner.py` and `rag_metrics.py`**
-Both tracked as open GitHub Issues. Contributors welcome on these — see labels below.
-
-**5. First public technical report**
-Run kwing against a real agent workflow, publish findings on the Krysta Wing site. This is our credibility moment.
-
----
-
-## GitHub Labels and Contribution Guide
-
-We split work across three access tiers:
-
-| Label | Meaning | Who |
-|---|---|---|
-| `🧱 layer:core` | Engine, schema, baseline logic | Core team only |
-| `🏃 layer:runner` | Model/runtime framework connectors | Contributors welcome |
-| `🔌 layer:plugin` | Validators, formatters, metric plugins | Contributors welcome |
-| `⚠️ status:blocker` | Breaking the execution loop | Prioritize immediately |
-| `🎯 scope:mvp` | Required before first public release | Must ship before anything else |
-
-**Before opening a PR:**
-- Do not modify `schema.py` without a team discussion — it is the data contract everything else depends on
-- Do not modify `claw-daemon.js` without understanding the full Kafka → Redis → SSE flow
-- All new runners must extend `runners/base.py`
-- All new plugins must extend `plugins/base.py`
-
----
-
-## Open Issues (Unblocked, Contributor-Ready)
-
-**Issue #1 — `torch_runner.py`** (`🏃 layer:runner` `🎯 scope:mvp`)
-Implement the PyTorch model runner extending `runners/base.py`. Must implement `load()`, `infer()`, and `teardown()`. See `runners/base.py` for the interface contract.
-
-**Issue #2 — `rag_metrics.py`** (`🔌 layer:plugin` `🎯 scope:mvp`)
-Implement `context_relevance()`, `faithfulness()`, and `hallucination_rate()` math functions. Use `sentence-transformers` for cosine similarity. See `plugins/rag_plugin.py` for how these will be called.
-
----
-
-## Identity and Positioning
-
-**Krysta Wing** is an independent engineering collective. We build infrastructure, not wrappers. We publish original technical findings, not paper summaries.
-
-We are not:
-- An MLOps dashboard
-- A model fine-tuning service
-- A consulting firm
-- An AI wrapper
-
-We are the execution layer that makes agent-generated code safe to run in production.
-
----
-
-## Contact and Links
-
-- PyPI: `pip install krysta`
-- Domains: `kwing-claw` · `kwing-library`
-- GitHub org: Krysta Wing (private repos — request access from core team)
-
----
-
-*Internal document — Krysta Wing Engineering. Last updated June 2026.*
