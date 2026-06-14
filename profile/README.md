@@ -23,17 +23,17 @@ isolated Docker environments.           memory metric, and event                
 Streams live via SSE.                   to a structured jobId trace.             passing data downstream.
 ```
 
-- Execute (claw-daemon): A lightweight backend service that spawns highly restricted, sandboxed container environments (--network none, hard memory limits) to isolate code execution entirely from host systems.
+- Execute (noa-daemon): A lightweight backend service that spawns highly restricted, sandboxed container environments (--network none, hard memory limits) to isolate code execution entirely from host systems.
 - Observe (krysta-library): A developer-first Python SDK that streams granular stdout and execution traces live into your agent UI as they happen, eliminating UI freezes.
 - Validate (gate.py): Structural and security gates that evaluate execution results against safety policies and schemas before the output is allowed to touch your next agent turn.
 
 ###  Developer API Surface
 
 ```py
-from krysta import Claw
+from krysta import Noa
 
 # 1. Spawn a secure, stateful runtime session
-async with Claw.spawn(runtime="python", session_id="agent_turn_4") as sandbox:
+async with Noa.spawn(runtime="python", session_id="agent_turn_4") as sandbox:
 
     # 2. Live streaming — observe stdout chunks as they happen
     async for chunk in sandbox.execute(agent_generated_code):
